@@ -1,0 +1,13 @@
+# Normalise line endings. Without this, files authored on Windows arrive at the
+# Linux CI runner with CRLF, and the LF/CRLF churn shows up as spurious diffs
+# on every checkout.
+* text=auto eol=lf
+
+# Generated icons are binary; never let git "fix" their line endings.
+*.png binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+
+# Keep generated and vendored files out of diff noise and language stats.
+web/package-lock.json linguist-generated=true -diff

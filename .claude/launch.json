@@ -1,0 +1,40 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "mathcoach",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--prefix",
+        "web"
+      ],
+      "port": 5173
+    },
+    {
+      "name": "mathcoach-offline",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "5199",
+        "--directory",
+        "web/dist-offline"
+      ],
+      "port": 5199
+    },
+    {
+      "name": "mathcoach-installed",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "5200",
+        "--directory",
+        "web/dist"
+      ],
+      "port": 5200
+    }
+  ]
+}

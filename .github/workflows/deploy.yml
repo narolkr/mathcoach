@@ -1,0 +1,85 @@
+# Build the app and publish it to GitHub Pages.
+#
+# Runs on every push to main, so the phone gets the new content by pulling to
+# refresh rather than by anyone remembering to run a build.
+#
+# The content bundle is generated here rather than committed: it is 1.2 MB of
+# derived data, and generating it in CI means the SymPy validation runs on
+# every deploy. A build that would ship a wrong answer fails here instead.
+
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  # Lets you deploy by hand from the Actions tab without pushing anything.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two deploys race; cancel-in-progress is off so a queued deploy
+# still runs rather than being dropped.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install Python dependencies
+        run: pip install -r tools/requirements.txt
+
+      - name: Install web dependencies
+        run: npm ci
+        working-directory: web
+
+      # The maths is checked before anything is published. Every template's
+      # answer is verified against SymPy independently, and no distractor may
+      # equal a correct answer.
+      - name: Test the content pipeline
+        run: python -m pytest tools/tests -q
+
+      - name: Build the content bundle
+        run: python tools/build.py
+
+      # Renders every LaTeX string through KaTeX and typechecks the app. Python
+      # cannot know what KaTeX accepts, so this is a separate gate.
+      - name: Test the frontend
+        run: npm test
+        working-directory: web
+
+      - name: Build
+        run: npm run build
+        working-directory: web
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

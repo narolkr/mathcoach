@@ -1,0 +1,29 @@
+{
+  "name": "mathcoach-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "check:latex": "node scripts/check-latex.mjs",
+    "test": "npm run check:latex && tsc --noEmit",
+    "build:offline": "vite build --config vite.offline.config.ts && node scripts/pack-offline.mjs"
+  },
+  "dependencies": {
+    "katex": "^0.18.5",
+    "marked": "^18.0.11",
+    "mathjs": "^15.2.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/katex": "^0.16.8",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
+    "@vitejs/plugin-react": "^6.1.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2"
+  }
+}

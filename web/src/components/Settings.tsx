@@ -1,0 +1,187 @@
+/**
+ * The Gemini API key and model choice.
+ *
+ * The key is typed in here and kept in this browser's localStorage. It is
+ * never compiled into the build: baking it into `mathcoach.html` would mean
+ * anyone you sent that file to had your key, and that file is meant to be
+ * copied around freely.
+ */
+
+import { useState } from "react";
+import {
+  clearSettings,
+  loadSettings,
+  maskKey,
+  saveSettings,
+  DEFAULT_MODEL,
+  type Settings as StoredSettings,
+} from "../engine/settings";
+import { listVisionModels } from "../engine/vision";
+
+export function Settings({ onChanged }: { onChanged?: () => void }) {
+  const [settings, setSettings] = useState<StoredSettings>(() => loadSettings());
+  const [draftKey, setDraftKey] = useState("");
+  const [models, setModels] = useState<string[] | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [checking, setChecking] = useState(false);
+
+  const persist = (next: StoredSettings) => {
+    setSettings(next);
+    const ok = saveSettings(next);
+    setFailed(!ok);
+    setMessage(
+      ok ? "Saved on this device." : "This browser refused to store the key.",
+    );
+    onChanged?.();
+  };
+
+  const checkModels = async () => {
+    setChecking(true);
+    setMessage(null);
+    try {
+      const available = await listVisionModels(settings.apiKey);
+      setModels(available);
+      setFailed(false);
+      setMessage(
+        available.length
+          ? `Your key can use ${available.length} models.`
+          : "That key returned no usable models.",
+      );
+    } catch (cause) {
+      setFailed(true);
+      setMessage(cause instanceof Error ? cause.message : "Couldn't reach Gemini.");
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  return (
+    <section className="panel settings">
+      <div>
+        <p className="eyebrow">Photo review</p>
+        <p className="muted">
+          Optional. Add a free Gemini API key to photograph your handwritten
+          working and have the <em>method</em> reviewed. Your answers are always
+          graded exactly, offline, without this — the key only adds commentary
+          on your working.
+        </p>
+      </div>
+
+      {settings.apiKey ? (
+        <div className="settings-row">
+          <p>
+            Key stored: <code>{maskKey(settings.apiKey)}</code>
+          </p>
+          <button
+            type="button"
+            className="btn btn-quiet"
+            onClick={() => {
+              clearSettings();
+              setSettings({ apiKey: "", model: DEFAULT_MODEL });
+              setModels(null);
+              setMessage("Key removed from this device.");
+              setFailed(false);
+              onChanged?.();
+            }}
+          >
+            Remove key
+          </button>
+        </div>
+      ) : (
+        <div className="settings-row">
+          <label className="answer-label" htmlFor="gemini-key">
+            API key
+          </label>
+          <input
+            id="gemini-key"
+            className="answer-input"
+            type="password"
+            value={draftKey}
+            spellCheck={false}
+            autoComplete="off"
+            placeholder="Paste a key from aistudio.google.com/apikey"
+            onChange={(event) => setDraftKey(event.target.value)}
+          />
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={!draftKey.trim()}
+            onClick={() => {
+              persist({ ...settings, apiKey: draftKey.trim() });
+              setDraftKey("");
+            }}
+          >
+            Save key
+          </button>
+          <p className="muted">
+            Get one free at{" "}
+            <a
+              href="https://aistudio.google.com/apikey"
+              target="_blank"
+              rel="noreferrer"
+            >
+              aistudio.google.com/apikey
+            </a>
+            . No card required. Note that Google may use free-tier requests to
+            improve its models — fine for calculus working, worth knowing.
+          </p>
+        </div>
+      )}
+
+      {settings.apiKey && (
+        <div className="settings-row">
+          <label className="answer-label" htmlFor="gemini-model">
+            Model
+          </label>
+          {models ? (
+            <select
+              id="gemini-model"
+              className="answer-input"
+              value={settings.model}
+              onChange={(event) =>
+                persist({ ...settings, model: event.target.value })
+              }
+            >
+              {models.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              id="gemini-model"
+              className="answer-input"
+              type="text"
+              value={settings.model}
+              spellCheck={false}
+              onChange={(event) =>
+                setSettings({ ...settings, model: event.target.value })
+              }
+              onBlur={() => persist(settings)}
+            />
+          )}
+          <button
+            type="button"
+            className="btn"
+            disabled={checking}
+            onClick={() => void checkModels()}
+          >
+            {checking ? "Checking…" : "Check which models my key can use"}
+          </button>
+          <p className="muted">
+            Google adds and retires models faster than this app gets rebuilt, so
+            it asks your key rather than trusting a hard-coded list.{" "}
+            <code>gemini-2.5-flash</code> is a good default; the lite variants
+            have higher daily limits.
+          </p>
+        </div>
+      )}
+
+      {message && (
+        <p className={failed ? "feedback feedback-bad" : "muted"}>{message}</p>
+      )}
+    </section>
+  );
+}

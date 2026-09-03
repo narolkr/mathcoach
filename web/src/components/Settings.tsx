@@ -16,7 +16,7 @@ import {
   DEFAULT_MODEL,
   type Settings as StoredSettings,
 } from "../engine/settings";
-import { listVisionModels } from "../engine/vision";
+import { listVisionModels, testVision } from "../engine/vision";
 
 export function Settings({ onChanged }: { onChanged?: () => void }) {
   const [settings, setSettings] = useState<StoredSettings>(() => loadSettings());
@@ -25,6 +25,11 @@ export function Settings({ onChanged }: { onChanged?: () => void }) {
   const [message, setMessage] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const [checking, setChecking] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{
+    ok: boolean;
+    message: string;
+  } | null>(null);
 
   const persist = (next: StoredSettings) => {
     setSettings(next);
@@ -55,6 +60,32 @@ export function Settings({ onChanged }: { onChanged?: () => void }) {
       setChecking(false);
     }
   };
+
+  const runTest = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      setTestResult(await testVision(settings.apiKey, settings.model));
+    } catch (cause) {
+      setTestResult({
+        ok: false,
+        message: cause instanceof Error ? cause.message : "Unknown failure.",
+      });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  /* The stored model may not appear in the fetched list - a model can be
+     retired, or the list can be narrower than what was saved earlier. A
+     <select> whose value matches no option displays its FIRST option instead,
+     so the dropdown would show one model while every request used another.
+     Keeping the stored value as an explicit option makes the mismatch visible
+     rather than silent. */
+  const options =
+    models && !models.includes(settings.model)
+      ? [settings.model, ...models]
+      : models;
 
   return (
     <section className="panel settings">
@@ -143,9 +174,10 @@ export function Settings({ onChanged }: { onChanged?: () => void }) {
                 persist({ ...settings, model: event.target.value })
               }
             >
-              {models.map((name) => (
+              {options?.map((name) => (
                 <option key={name} value={name}>
                   {name}
+                  {models.includes(name) ? "" : " — not in your key's list"}
                 </option>
               ))}
             </select>
@@ -162,20 +194,47 @@ export function Settings({ onChanged }: { onChanged?: () => void }) {
               onBlur={() => persist(settings)}
             />
           )}
-          <button
-            type="button"
-            className="btn"
-            disabled={checking}
-            onClick={() => void checkModels()}
-          >
-            {checking ? "Checking…" : "Check which models my key can use"}
-          </button>
+          <div className="settings-buttons">
+            <button
+              type="button"
+              className="btn"
+              disabled={checking}
+              onClick={() => void checkModels()}
+            >
+              {checking ? "Checking…" : "Check which models my key can use"}
+            </button>
+            <button
+              type="button"
+              className="btn"
+              disabled={testing}
+              onClick={() => void runTest()}
+            >
+              {testing ? "Sending…" : "Send a test image"}
+            </button>
+          </div>
           <p className="muted">
             Google adds and retires models faster than this app gets rebuilt, so
             it asks your key rather than trusting a hard-coded list.{" "}
             <code>gemini-2.5-flash</code> is a good default; the lite variants
             have higher daily limits.
           </p>
+          <p className="muted">
+            <strong>If a photo fails but the model is listed</strong>, use{" "}
+            <em>Send a test image</em>. Listing models proves less than it
+            looks: that call takes no image and is not restricted by region, so
+            it can offer a model that refuses to actually run. The test sends
+            one small generated image down the same path a photo takes and
+            reports exactly what Google says.
+          </p>
+          {testResult && (
+            <p
+              className={
+                testResult.ok ? "feedback feedback-good" : "feedback feedback-bad"
+              }
+            >
+              {testResult.message}
+            </p>
+          )}
         </div>
       )}
 

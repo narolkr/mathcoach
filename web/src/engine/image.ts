@@ -49,6 +49,17 @@ export async function prepareImage(file: File): Promise<PreparedImage> {
   const previewUrl = canvas.toDataURL("image/jpeg", JPEG_QUALITY);
   const base64 = previewUrl.slice(previewUrl.indexOf(",") + 1);
 
+  // iOS Safari returns a blank canvas - and `toDataURL` returns the bare
+  // string "data:," - when a decode exceeds its memory limit, which a 48MP
+  // photo can. Without this the app would POST an empty image and surface
+  // whatever Gemini says about it, which is never the actual cause.
+  if (base64.length < 512) {
+    throw new Error(
+      "The browser couldn't encode that photo - it may be too large for " +
+        "this device to process. Try a photo taken at a lower resolution.",
+    );
+  }
+
   return {
     base64,
     mimeType: "image/jpeg",

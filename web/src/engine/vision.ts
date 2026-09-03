@@ -230,6 +230,20 @@ export async function reviewWorking({
   };
 }
 
+/**
+ * Turn a failed response into something both readable and diagnosable.
+ *
+ * Every branch now ends with Gemini's own message. An earlier version replaced
+ * it with our prose on 403 and 404, which made one class of failure impossible
+ * to diagnose from the app: a region block reports as a plain 400 whose only
+ * distinguishing feature is the sentence "User location is not supported for
+ * the API use", and swallowing that sentence left "it says my model is not
+ * supported, but the model is listed" with nowhere to go.
+ *
+ * The two calls differ in that respect: `ListModels` is not region-gated but
+ * `generateContent` is, so a model can genuinely appear in the list and still
+ * refuse to run.
+ */
 async function explainFailure(response: Response): Promise<string> {
   let detail = "";
   try {
@@ -239,27 +253,47 @@ async function explainFailure(response: Response): Promise<string> {
     // Non-JSON error body; the status alone will have to do.
   }
 
+  const said = detail ? ` Gemini said: "${detail}"` : "";
+  const lower = detail.toLowerCase();
+
+  // Checked before the status switch, because this one arrives as a 400 that
+  // otherwise reads like a request we built wrongly.
+  if (lower.includes("user location is not supported")) {
+    return (
+      "Google is refusing the request because of where it thinks you are, not " +
+      "because of the model or the photo. If you have a VPN or private relay " +
+      "on, turn it off and try again — iCloud Private Relay does this. " +
+      "Otherwise the Gemini API is not available from your region yet." +
+      said
+    );
+  }
+
+  if (lower.includes("api key not valid") || lower.includes("api_key_invalid")) {
+    return "That API key is not valid. Re-paste it in the Journal tab." + said;
+  }
+
   switch (response.status) {
     case 400:
-      return detail.toLowerCase().includes("api key")
-        ? "That API key is not valid. Check it in Settings."
-        : `Gemini rejected the request: ${detail || "bad request"}`;
+      return `Gemini rejected the request.${said || " No reason given."}`;
     case 403:
-      return "That key is not allowed to use this model. Pick another in Settings.";
+      return (
+        "That key is not allowed to use this model. Pick another in the " +
+        "Journal tab." + said
+      );
     case 404:
       return (
-        "That model name does not exist. Use " +
-        '"Check which models my key can use" in Settings.'
+        "That model name does not exist for this API version. Use " +
+        '"Check which models my key can use" in the Journal tab.' + said
       );
     case 429:
       return (
         "You have hit the free-tier rate limit. Wait a minute, or switch to a " +
-        "lighter model such as gemini-2.5-flash-lite."
+        "lighter model such as gemini-2.5-flash-lite." + said
       );
     case 503:
-      return "Gemini is overloaded right now. Try again shortly.";
+      return "Gemini is overloaded right now. Try again shortly." + said;
     default:
-      return `Gemini returned ${response.status}${detail ? `: ${detail}` : ""}`;
+      return `Gemini returned ${response.status}.${said}`;
   }
 }
 
@@ -432,4 +466,122 @@ export async function transcribeAnswer({
     lines: Array.isArray(parsed.lines) ? parsed.lines : [],
     finalAnswer: typeof parsed.finalAnswer === "string" ? parsed.finalAnswer.trim() : "",
   };
+}
+
+// ---------------------------------------------------------------------------
+// Diagnosing a key
+// ---------------------------------------------------------------------------
+
+export interface VisionTest {
+  ok: boolean;
+  /** What to show the learner: the failure, or what the model read back. */
+  message: string;
+}
+
+/**
+ * Send one tiny generated image down the exact path a real photo takes.
+ *
+ * Worth its own button because `ListModels` succeeding proves almost nothing:
+ * it is not region-gated and does not take an image, so it happily lists a
+ * model that `generateContent` will refuse. Without this, diagnosing "the
+ * model is listed but the photo fails" means guessing between a region block,
+ * a key restriction, a model that cannot see, and a broken image encode.
+ *
+ * It draws its own image rather than shipping a fixture, so the canvas encode
+ * is under test too - that step is where a blank JPEG would come from.
+ */
+export async function testVision(
+  apiKey: string,
+  model: string,
+): Promise<VisionTest> {
+  let base64: string;
+  try {
+    base64 = drawTestImage();
+  } catch (cause) {
+    return {
+      ok: false,
+      message:
+        "This browser could not encode an image at all, so the photo feature " +
+        `cannot work here. ${cause instanceof Error ? cause.message : ""}`,
+    };
+  }
+
+  const url =
+    `${ENDPOINT}/${encodeURIComponent(model)}:generateContent` +
+    `?key=${encodeURIComponent(apiKey)}`;
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: [
+              { text: "Reply with only the characters written in this image." },
+              { inline_data: { mime_type: "image/jpeg", data: base64 } },
+            ],
+          },
+        ],
+        generationConfig: { temperature: 0 },
+      }),
+    });
+  } catch (cause) {
+    return {
+      ok: false,
+      message:
+        window.location.protocol === "file:"
+          ? "The browser blocked the request because this page is a local file. " +
+            "Open the app from its web address instead."
+          : "Couldn't reach Gemini at all. Check your connection." +
+            (cause instanceof Error ? ` (${cause.message})` : ""),
+    };
+  }
+
+  if (!response.ok) {
+    return { ok: false, message: await explainFailure(response) };
+  }
+
+  const payload = (await response.json()) as {
+    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+  };
+  const read = payload.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+
+  if (!read) {
+    return {
+      ok: false,
+      message:
+        `${model} accepted the image but returned no text. It may not be a ` +
+        "model that can see images — try gemini-2.5-flash.",
+    };
+  }
+
+  // Not an assertion about accuracy: reading anything back proves the whole
+  // path works. Whether it read it *correctly* is the learner's to judge.
+  return {
+    ok: true,
+    message: `Working. ${model} read the test image as "${read}" (it says "dy/dx").`,
+  };
+}
+
+/** A small white image with `dy/dx` drawn on it, encoded as JPEG. */
+function drawTestImage(): string {
+  const canvas = document.createElement("canvas");
+  canvas.width = 320;
+  canvas.height = 120;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("No 2D canvas available.");
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = "#000000";
+  context.font = "48px serif";
+  context.fillText("dy/dx", 40, 78);
+
+  const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
+  const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+  if (base64.length < 100) {
+    throw new Error("The canvas encoded to an empty image.");
+  }
+  return base64;
 }

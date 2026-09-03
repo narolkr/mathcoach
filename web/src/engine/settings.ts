@@ -11,11 +11,24 @@
 const KEY = "mathcoach.settings.v1";
 
 /**
- * Confirmed available on the free tier at the time of writing. Newer models
- * exist (the 3.x series); `listVisionModels()` asks the key what it can
- * actually use rather than trusting this list to stay current.
+ * Flash-Lite rather than Flash, for three reasons that all point the same way
+ * on this workload:
+ *
+ * - **Thinking is off by default on Lite and on for Flash.** Reading
+ *   handwriting is recognition, not reasoning, so thinking is latency with no
+ *   benefit - and on a 2.5 model it can consume the output budget and return
+ *   nothing at all.
+ * - **Four times the daily free quota** at the time of writing: 15 requests a
+ *   minute and 1000 a day, against 10 and 250 for Flash.
+ * - **Accuracy matters less here than it looks.** A misread is shown for
+ *   confirmation before anything is graded, and correctness is settled by the
+ *   fingerprint grader, never by the model. So the cheap model's mistakes are
+ *   visible and fixable rather than silently wrong.
+ *
+ * Newer models exist; `listVisionModels()` asks the key what it can actually
+ * use rather than trusting this to stay current.
  */
-export const DEFAULT_MODEL = "gemini-2.5-flash";
+export const DEFAULT_MODEL = "gemini-2.5-flash-lite";
 
 export interface Settings {
   /** Empty until the learner pastes one in. */

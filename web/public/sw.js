@@ -18,7 +18,7 @@
  * new worker claims it - but it is the lever for forcing a clean slate if a
  * cached asset ever goes bad.
  */
-const CACHE = "mathcoach-v4";
+const CACHE = "mathcoach-v5";
 
 // The shell, fetched eagerly at install so the very first offline launch works
 // even if the learner never navigated anywhere.

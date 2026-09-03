@@ -161,7 +161,33 @@ Practical notes:
   `null` origin, which Google may refuse; the app names that cause when it
   happens. The installed web app is fine.
 
-### When a photo fails
+### When a photo is slow, or comes back empty
+
+Pick **`gemini-2.5-flash-lite`** in the Journal tab. It is the right model for
+this job, and not because it is a compromise:
+
+| | thinking by default | free tier | reading handwriting |
+|---|---|---|---|
+| `gemini-2.5-flash-lite` | **off** | 15/min, 1000/day | plenty |
+| `gemini-2.5-flash` | on | 10/min, 250/day | slightly better |
+
+Transcription is optical recognition, not reasoning, so thinking is latency
+with no benefit. Worse, on a 2.5 model the output budget *includes* thinking
+tokens, so thinking can consume the whole allowance and return
+`finishReason: MAX_TOKENS` with no text — which looks exactly like "the
+service is busy" but is not. The app now sends `thinkingBudget: 0` on the
+transcription call whatever model you choose, retries an overloaded request
+twice with backoff, and names `MAX_TOKENS` when it sees it instead of saying
+"empty response".
+
+Lite's transcription mistakes cost little here by design: you confirm what it
+read before anything is graded, and correctness is settled by the fingerprint
+grader, never by the model.
+
+*Send a test image* reports the round-trip time, so slowness is a number you
+can compare between models rather than a feeling.
+
+### When a photo fails outright
 
 Journal → **Send a test image** sends one small generated image down the same
 path a photo takes and reports Google's reply verbatim. Use it before

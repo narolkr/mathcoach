@@ -214,9 +214,18 @@ export function Settings({ onChanged }: { onChanged?: () => void }) {
           </div>
           <p className="muted">
             Google adds and retires models faster than this app gets rebuilt, so
-            it asks your key rather than trusting a hard-coded list.{" "}
-            <code>gemini-2.5-flash</code> is a good default; the lite variants
-            have higher daily limits.
+            it asks your key rather than trusting a hard-coded list.
+          </p>
+          <p className="muted">
+            <strong>If photos are slow or come back empty, pick{" "}
+            <code>gemini-2.5-flash-lite</code>.</strong> It is the right choice
+            for reading handwriting: thinking is off by default (
+            <code>gemini-2.5-flash</code> has it on, and reasoning about
+            handwriting is wasted time), and the free tier allows roughly four
+            times as many requests per day. Its transcription mistakes cost you
+            little, because you confirm what it read before anything is graded
+            and the grader is never the model. <em>Send a test image</em> reports
+            how long a round trip actually takes, so you can compare.
           </p>
           <p className="muted">
             <strong>If a photo fails but the model is listed</strong>, use{" "}

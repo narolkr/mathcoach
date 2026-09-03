@@ -22,6 +22,84 @@ import type { Answer, Problem } from "../content/schema";
 
 const ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models";
 
+/**
+ * Transcription is optical character recognition, not reasoning, so thinking
+ * is pure latency here - and worse than that on a 2.5 model, where the output
+ * budget *includes* thinking tokens: thinking can eat the whole allowance and
+ * return `finishReason: MAX_TOKENS` with no text at all. That is the "sometimes
+ * gives no output" failure, and it is not traffic.
+ *
+ * `gemini-2.5-flash-lite` has thinking off by default and `gemini-2.5-flash`
+ * has it on, so this is sent explicitly rather than left to the model default.
+ * Older and newer families name the control differently, so a model that
+ * rejects the field is retried without it - see `postGenerate`.
+ */
+const NO_THINKING = { thinkingConfig: { thinkingBudget: 0 } };
+
+/** Statuses where trying again shortly is the right move, not an error. */
+const RETRYABLE = new Set([429, 500, 502, 503, 504]);
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * POST to `generateContent`, retrying the transient failures and coping with
+ * models that do not accept a thinking budget.
+ *
+ * Two distinct problems handled in one place:
+ *
+ * 1. **Overload.** 503 and 429 are common on the free tier and mean "ask again
+ *    shortly", not "this cannot work". Failing the whole photo on the first one
+ *    made the feature feel broken when it was merely busy.
+ * 2. **Field compatibility.** `thinkingConfig` is accepted by the 2.5 family
+ *    and rejected by others, and the newer families renamed the control. A 400
+ *    naming the field is retried once without it, so this keeps working across
+ *    a model change rather than needing a rebuild.
+ */
+async function postGenerate(
+  url: string,
+  body: Record<string, unknown>,
+  attempts = 3,
+): Promise<Response> {
+  let withoutThinking = false;
+
+  for (let attempt = 1; ; attempt += 1) {
+    const payload = { ...body };
+    if (withoutThinking && payload.generationConfig) {
+      const config = { ...(payload.generationConfig as Record<string, unknown>) };
+      delete config.thinkingConfig;
+      payload.generationConfig = config;
+    }
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (response.ok) return response;
+
+    // A rejected thinking budget is worth exactly one retry without it, and
+    // the body has to be read to know - so clone rather than consume, leaving
+    // the original readable by `explainFailure` if the retry is not taken.
+    if (response.status === 400 && !withoutThinking) {
+      const text = await response.clone().text();
+      if (/thinking/i.test(text)) {
+        withoutThinking = true;
+        continue;
+      }
+    }
+
+    if (RETRYABLE.has(response.status) && attempt < attempts) {
+      // 1s then 3s. Long enough for a transient overload to clear, short
+      // enough that someone holding a phone does not give up.
+      await wait(attempt === 1 ? 1000 : 3000);
+      continue;
+    }
+
+    return response;
+  }
+}
+
 export interface WorkingReview {
   /** False when the handwriting cannot be read - better than a guess. */
   legible: boolean;
@@ -149,26 +227,25 @@ export async function reviewWorking({
     `${ENDPOINT}/${encodeURIComponent(model)}:generateContent` +
     `?key=${encodeURIComponent(apiKey)}`;
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [
-        {
-          parts: [
-            { text: buildPrompt(problem, answer) },
-            { inline_data: { mime_type: mimeType, data: imageBase64 } },
-          ],
-        },
-      ],
-      generationConfig: {
-        responseMimeType: "application/json",
-        responseSchema: RESPONSE_SCHEMA,
-        // Low, not zero: this is a reading-and-describing task, and a little
-        // variation reads better without moving the judgement.
-        temperature: 0.2,
+  // Thinking is left on here, unlike transcription: reviewing a method is the
+  // one genuinely analytical call in the app, and it is not on the critical
+  // path - the answer is already graded by the time it runs.
+  const response = await postGenerate(url, {
+    contents: [
+      {
+        parts: [
+          { text: buildPrompt(problem, answer) },
+          { inline_data: { mime_type: mimeType, data: imageBase64 } },
+        ],
       },
-    }),
+    ],
+    generationConfig: {
+      responseMimeType: "application/json",
+      responseSchema: RESPONSE_SCHEMA,
+      // Low, not zero: this is a reading-and-describing task, and a little
+      // variation reads better without moving the judgement.
+      temperature: 0.2,
+    },
   });
 
   if (!response.ok) {
@@ -408,26 +485,23 @@ export async function transcribeAnswer({
     `${ENDPOINT}/${encodeURIComponent(model)}:generateContent` +
     `?key=${encodeURIComponent(apiKey)}`;
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [
-        {
-          parts: [
-            { text: prompt },
-            { inline_data: { mime_type: mimeType, data: imageBase64 } },
-          ],
-        },
-      ],
-      generationConfig: {
-        responseMimeType: "application/json",
-        responseSchema: TRANSCRIBE_SCHEMA,
-        // Zero, unlike the method review: transcription has one right answer
-        // and creativity is purely a liability.
-        temperature: 0,
+  const response = await postGenerate(url, {
+    contents: [
+      {
+        parts: [
+          { text: prompt },
+          { inline_data: { mime_type: mimeType, data: imageBase64 } },
+        ],
       },
-    }),
+    ],
+    generationConfig: {
+      responseMimeType: "application/json",
+      responseSchema: TRANSCRIBE_SCHEMA,
+      // Zero, unlike the method review: transcription has one right answer
+      // and creativity is purely a liability.
+      temperature: 0,
+      ...NO_THINKING,
+    },
   });
 
   if (!response.ok) {
@@ -450,7 +524,21 @@ export async function transcribeAnswer({
 
   const text = payload.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!text) {
-    throw new Error("Gemini returned an empty response.");
+    const reason = payload.candidates?.[0]?.finishReason;
+    // MAX_TOKENS with no text means the budget went on thinking rather than
+    // the answer. Naming it beats "empty response", which sends you looking
+    // at your handwriting for a fault that is in the request.
+    if (reason === "MAX_TOKENS") {
+      throw new Error(
+        "The model spent its whole output budget before answering. Switch to " +
+          "gemini-2.5-flash-lite in the Journal tab - it does not do that.",
+      );
+    }
+    throw new Error(
+      reason
+        ? `Gemini returned nothing usable (finish reason: ${reason}).`
+        : "Gemini returned an empty response.",
+    );
   }
 
   let parsed: Partial<Transcription>;
@@ -510,22 +598,21 @@ export async function testVision(
     `${ENDPOINT}/${encodeURIComponent(model)}:generateContent` +
     `?key=${encodeURIComponent(apiKey)}`;
 
+  const started = Date.now();
   let response: Response;
   try {
-    response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: [
-              { text: "Reply with only the characters written in this image." },
-              { inline_data: { mime_type: "image/jpeg", data: base64 } },
-            ],
-          },
-        ],
-        generationConfig: { temperature: 0 },
-      }),
+    // The same path a photo takes, thinking budget included, so the elapsed
+    // time it reports is comparable to what a real transcription will cost.
+    response = await postGenerate(url, {
+      contents: [
+        {
+          parts: [
+            { text: "Reply with only the characters written in this image." },
+            { inline_data: { mime_type: "image/jpeg", data: base64 } },
+          ],
+        },
+      ],
+      generationConfig: { temperature: 0, ...NO_THINKING },
     });
   } catch (cause) {
     return {
@@ -559,9 +646,14 @@ export async function testVision(
 
   // Not an assertion about accuracy: reading anything back proves the whole
   // path works. Whether it read it *correctly* is the learner's to judge.
+  // The timing is the useful part when the complaint is slowness - it turns
+  // "feels slow" into a number you can compare between models.
+  const seconds = ((Date.now() - started) / 1000).toFixed(1);
   return {
     ok: true,
-    message: `Working. ${model} read the test image as "${read}" (it says "dy/dx").`,
+    message:
+      `Working, in ${seconds}s. ${model} read the test image as "${read}" ` +
+      '(it says "dy/dx"). A real photo is larger, so expect somewhat longer.',
   };
 }
 

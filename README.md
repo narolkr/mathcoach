@@ -161,6 +161,26 @@ Practical notes:
   `null` origin, which Google may refuse; the app names that cause when it
   happens. The installed web app is fine.
 
+### When a photo fails
+
+Journal → **Send a test image** sends one small generated image down the same
+path a photo takes and reports Google's reply verbatim. Use it before
+anything else; every error message now ends with what Google actually said.
+
+The confusing failure is *"the model is listed as supported, but the photo
+says it is not"*. Those are two different calls with different restrictions:
+
+| call | region-gated | takes an image |
+|---|---|---|
+| `ListModels` — fills the dropdown | no | no |
+| `generateContent` — reads the photo | **yes** | yes |
+
+So a model can genuinely appear in your list and still refuse to run. That
+refusal reads *"User location is not supported for the API use"*, and on an
+iPhone the usual cause is **iCloud Private Relay** — it egresses through an
+Apple IP that Google often rejects. Any VPN does the same. Turn it off and
+retry before concluding the region is unsupported.
+
 ## Setup
 
 Python 3.12+ and Node 20+.

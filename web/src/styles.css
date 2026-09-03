@@ -24,6 +24,23 @@
   --f-display: "Spectral", Georgia, "Times New Roman", serif;
   --f-body: "IBM Plex Sans", -apple-system, "Segoe UI", system-ui, sans-serif;
   --f-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+
+  /* Notch and home-indicator insets, named once so every edge reads the same
+     value and so a test can fake a notch by overriding these four.
+     `env()` resolves to 0px in a browser tab - Safari's own toolbars already
+     occupy that space - and to the real inset only in the installed web app,
+     which is exactly where the status bar overlaps the page.
+
+     The top one is not optional: `apple-mobile-web-app-status-bar-style` is
+     `black-translucent`, which deliberately draws the page *under* the clock
+     and battery. Without reserving this the header is unreachable. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+
+  /* iOS Human Interface Guidelines minimum comfortable tap target. */
+  --tap: 44px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -93,7 +110,13 @@ code {
 .shell {
   max-width: var(--measure);
   margin: 0 auto;
-  padding: 1rem clamp(1rem, 4vw, 2rem) 5rem;
+  /* Every edge honours its inset. Landscape on a notched phone puts the notch
+     on a side, and a landscape viewport is wide enough to escape the phone
+     media query below - so the side insets belong here, not only there. */
+  padding: calc(1rem + var(--safe-top))
+    max(clamp(1rem, 4vw, 2rem), var(--safe-right))
+    calc(5rem + var(--safe-bottom))
+    max(clamp(1rem, 4vw, 2rem), var(--safe-left));
 }
 
 .muted {
@@ -115,6 +138,7 @@ code {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 0.75rem;
   padding: 0.5rem 0 1.5rem;
   border-bottom: 2px solid var(--ink);
   margin-bottom: 2rem;
@@ -959,7 +983,14 @@ button.brand {
   background: none;
   color: var(--ink);
   cursor: pointer;
+  /* Zero padding left the hit area at the text's own line box - about 29px,
+     under the 44px minimum, so the title was a fiddly target even once it was
+     clear of the status bar. Grow it vertically only: horizontal padding would
+     push the title away from the page's left rule. */
   padding: 0;
+  min-height: var(--tap);
+  display: inline-flex;
+  align-items: center;
 }
 
 button.brand:hover {
@@ -1082,10 +1113,25 @@ button.brand:hover {
 
 @media (max-width: 40rem) {
   .shell {
-    /* Respect the notch and the home-indicator strip. */
-    padding: 0.75rem max(0.85rem, env(safe-area-inset-left))
-      calc(3rem + env(safe-area-inset-bottom))
-      max(0.85rem, env(safe-area-inset-right));
+    /* Respect the notch, the rounded corners and the home-indicator strip.
+       The top is the one that bites: in the installed web app the status bar
+       is drawn over the page, so without this the title and Journal button
+       sit under the clock and battery and cannot be tapped. */
+    padding: calc(0.75rem + var(--safe-top)) max(0.85rem, var(--safe-right))
+      calc(3rem + var(--safe-bottom)) max(0.85rem, var(--safe-left));
+  }
+
+  /* Both header controls need a full tap target, and the row needs enough
+     height to hold them clear of the status bar above it. */
+  .topbar {
+    padding-top: 0.25rem;
+    padding-bottom: 1rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .topbar .btn {
+    min-height: var(--tap);
+    padding-inline: 1.1rem;
   }
 
   /* The ruled-paper grid is a nice texture on a large screen and visual noise

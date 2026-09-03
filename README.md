@@ -113,39 +113,43 @@ of work is too much to leave to `localStorage`. If the browser refuses to store
 anything at all, the app says so in a banner rather than losing your work
 silently.
 
-## Photo review of handwritten working (optional)
+## Answering from a photo (optional)
 
-Solve a problem, write it out on paper, photograph it, and have the **method**
-reviewed. Needs a free [Gemini API key](https://aistudio.google.com/apikey) —
-paste it into the Journal tab under *Photo review*. Everything else in the app
-works without it.
+Work the problem on paper, tap **📷 Answer from a photo**, and the app reads
+your final answer into the answer box. Check it matches what you wrote, then
+press Check. Needs a free [Gemini API key](https://aistudio.google.com/apikey),
+pasted into the Journal tab under *Photo review*. Everything else works without
+it.
 
-**The grader keeps the verdict.** Correct or not is decided by the
-SymPy-verified fingerprint, exactly as always. A vision model reading
-handwriting will occasionally misread a 4 as a 9, and letting it overrule the
-grader would reintroduce the one failure this whole app is built to avoid:
-telling you you're wrong when you aren't. So the model never decides
-correctness — it reviews the *working*, which the app otherwise never sees.
+**The grader still decides.** Correct or not is settled by the SymPy-verified
+fingerprint, exactly as for a typed answer. The model does optical recognition
+and nothing else.
 
-**It is given the answer.** The prompt carries the verified answer and the
-problem's named misconceptions, so the model is never solving anything, only
-comparing your lines against a known-correct result and a known error
-vocabulary. When it recognises one of those misconceptions, the app shows its
-own authored wording rather than the model's paraphrase. It also returns a
-transcription of what it thought you wrote, so a misread is visible rather than
-hidden behind a confident critique.
+**The correct answer is deliberately not sent on that call.** If the model knew
+the right answer it would tend to report *that* rather than what is on your
+paper, and the app would then be grading the model's knowledge instead of your
+work. So the transcription call gets no ground truth, no hints, and no
+correctness question — just "read this".
 
-**Only after you've answered.** A camera button next to an unsolved problem is
-a hint you can reach for at thirty seconds, which defeats the point.
+**You confirm before it is graded.** Handwriting recognition misreads a 4 as a 9
+eventually. The transcription lands in an editable box alongside the lines it
+read, so a misread is visible and fixable rather than silently marked wrong.
+
+Separately, once a problem is solved, **Review my working** sends the photo
+*with* the verified answer and the problem's named misconceptions, and comments
+on the method: which line went wrong, and whether there was a shorter route.
+That is safe to give ground truth to, because the answer is already locked in.
+When it recognises one of the app's own misconceptions, the app shows its
+authored wording rather than the model's paraphrase.
 
 Practical notes:
 
 - **The key lives in `localStorage`, never in the build.** Baking it into
   `mathcoach.html` would hand your key to anyone you sent that file to. A
   `grep` for it in the packed file returns nothing.
-- **Photos are downscaled on-device** to 1568px on the long edge before
-  sending — a 3–12 MB phone photo becomes roughly 30 KB, which matters on
-  mobile data and on a tight free quota.
+- **Photos are downscaled on-device** to 1568px on the long edge — a 3–12 MB
+  phone photo becomes roughly 30 KB, which matters on mobile data and on a
+  tight free quota.
 - **Free tier is ample**: a few photos per session against limits in the
   hundreds-to-thousands per day. Check
   [your dashboard](https://aistudio.google.com/rate-limit) for current numbers;
@@ -153,9 +157,9 @@ Practical notes:
   improve Google's models.
 - **Models change faster than this app gets rebuilt**, so Settings can ask your
   key which models it can actually use rather than trusting a hard-coded list.
-- **`file://` may block the request.** A local file has a `null` origin, which
-  Google may refuse. The app names that specific cause when it happens; serve
-  the app over http if you hit it. This is the one feature that needs a network.
+- **Needs a network, and an http(s) origin.** A local `file://` page has a
+  `null` origin, which Google may refuse; the app names that cause when it
+  happens. The installed web app is fine.
 
 ## Setup
 

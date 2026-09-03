@@ -289,3 +289,147 @@ export async function listVisionModels(apiKey: string): Promise<string[]> {
     .filter((name) => name && !/image|audio|embedding|tts|transcribe/i.test(name))
     .sort();
 }
+
+// ---------------------------------------------------------------------------
+// Answering from a photo
+// ---------------------------------------------------------------------------
+
+export interface Transcription {
+  /** False when the handwriting cannot be read - better than a guess. */
+  legible: boolean;
+  /** Why, when it is not legible or not mathematics at all. */
+  problem?: string;
+  /** Each line of working, as read. Shown so a misread is visible. */
+  lines: string[];
+  /**
+   * The final answer, rewritten in the app's input syntax so it can be typed
+   * straight into the answer box: `6*x*cos(3*x^2+1)`, not LaTeX.
+   */
+  finalAnswer: string;
+}
+
+const TRANSCRIBE_SCHEMA = {
+  type: "object",
+  properties: {
+    legible: { type: "boolean" },
+    problem: { type: "string" },
+    lines: { type: "array", items: { type: "string" } },
+    finalAnswer: { type: "string" },
+  },
+  required: ["legible", "lines", "finalAnswer"],
+};
+
+/**
+ * Read a photo of handwritten working and pull out the final answer.
+ *
+ * **The correct answer is deliberately NOT sent.** That is the whole integrity
+ * of this path. If the model knew the right answer it would tend to report
+ * that rather than what is actually on the paper, and the app would then
+ * cheerfully grade the model's knowledge instead of the learner's work.
+ *
+ * So this call does optical recognition and nothing else - no correctness
+ * judgement, no hints, no ground truth. The extracted answer goes into the
+ * answer box for the learner to confirm, and the existing fingerprint grader
+ * decides whether it is right, exactly as it does for a typed answer. A misread
+ * is visible and editable before it is ever graded.
+ */
+export async function transcribeAnswer({
+  apiKey,
+  model,
+  imageBase64,
+  mimeType,
+  problem,
+}: Omit<ReviewRequest, "answer">): Promise<Transcription> {
+  const variables = problem.variables.length
+    ? problem.variables.join(", ")
+    : "x";
+
+  const prompt = [
+    "You are reading a photograph of handwritten mathematical working.",
+    "",
+    "Your ONLY job is optical recognition. Do not solve anything, do not check",
+    "anything, and do not correct anything. Report what is on the paper.",
+    "",
+    "1. Transcribe each line of working into `lines`, in order, as written.",
+    "2. Put the writer's FINAL answer in `finalAnswer`, rewritten in this",
+    "   plain-text syntax so it can be typed into a computer:",
+    "     - multiplication explicit: 6*x, not 6x",
+    "     - powers with ^: x^2",
+    "     - functions with brackets: sin(2*x), cos(x), ln(x), sqrt(x), exp(x)",
+    "     - fractions with /: (2*x+1)/(x^2-3)",
+    `     - use only these variables: ${variables}`,
+    "     - no LaTeX, no unicode symbols, no equals sign, no 'dy/dx ='",
+    "3. If the final answer is wrong, transcribe it wrong. Faithfulness to the",
+    "   page matters more than producing something plausible.",
+    "",
+    "If you cannot read it, set legible to false and say why in `problem`.",
+    "If the image is not handwritten mathematics, set legible to false.",
+    "Never invent a line you cannot see.",
+    "",
+    `For context only, the question was: ${problem.instruction}`,
+    `The expression under discussion, in LaTeX: ${problem.promptLatex}`,
+  ].join("\n");
+
+  const url =
+    `${ENDPOINT}/${encodeURIComponent(model)}:generateContent` +
+    `?key=${encodeURIComponent(apiKey)}`;
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [
+        {
+          parts: [
+            { text: prompt },
+            { inline_data: { mime_type: mimeType, data: imageBase64 } },
+          ],
+        },
+      ],
+      generationConfig: {
+        responseMimeType: "application/json",
+        responseSchema: TRANSCRIBE_SCHEMA,
+        // Zero, unlike the method review: transcription has one right answer
+        // and creativity is purely a liability.
+        temperature: 0,
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await explainFailure(response));
+  }
+
+  const payload = (await response.json()) as {
+    candidates?: Array<{
+      content?: { parts?: Array<{ text?: string }> };
+      finishReason?: string;
+    }>;
+    promptFeedback?: { blockReason?: string };
+  };
+
+  if (payload.promptFeedback?.blockReason) {
+    throw new Error(
+      `Gemini declined the request (${payload.promptFeedback.blockReason}).`,
+    );
+  }
+
+  const text = payload.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) {
+    throw new Error("Gemini returned an empty response.");
+  }
+
+  let parsed: Partial<Transcription>;
+  try {
+    parsed = JSON.parse(text) as Partial<Transcription>;
+  } catch {
+    throw new Error("Gemini's reply was not the JSON shape we asked for.");
+  }
+
+  return {
+    legible: parsed.legible !== false,
+    problem: parsed.problem,
+    lines: Array.isArray(parsed.lines) ? parsed.lines : [],
+    finalAnswer: typeof parsed.finalAnswer === "string" ? parsed.finalAnswer.trim() : "",
+  };
+}

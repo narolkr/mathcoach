@@ -20,6 +20,7 @@ import { AnswerInput } from "./AnswerInput";
 import { HintLadder } from "./HintLadder";
 import { Prose, Tex } from "./MathText";
 import { WorkingReview } from "./WorkingReview";
+import { PhotoAnswer } from "./PhotoAnswer";
 
 interface ProblemCardProps {
   levelId: string;
@@ -162,6 +163,21 @@ export function ProblemCard({
         />
       ) : (
         <>
+          {!solved && onNeedsKey && (
+            <PhotoAnswer
+              problem={problem}
+              onNeedsKey={onNeedsKey}
+              onTranscribed={(answer) =>
+                // Fills the first slot only. Multi-slot problems ask for
+                // separate named values, and guessing which line of the page
+                // maps to which box would be worse than letting you type them.
+                setInputs((previous) =>
+                  previous.map((value, index) => (index === 0 ? answer : value)),
+                )
+              }
+            />
+          )}
+
           <div className="answers">
             {problem.answers.map((answer, i) => (
               <AnswerInput

@@ -11,7 +11,14 @@
  * it cached the app opens to "Content didn't load" on a train.
  */
 
-const CACHE = "mathcoach-v1";
+/*
+ * Bumping this name is what evicts a previous build: `activate` deletes every
+ * cache that is not the current one. It does not need to change per deploy -
+ * the fetch handler revalidates in the background and the page reloads when a
+ * new worker claims it - but it is the lever for forcing a clean slate if a
+ * cached asset ever goes bad.
+ */
+const CACHE = "mathcoach-v2";
 
 // The shell, fetched eagerly at install so the very first offline launch works
 // even if the learner never navigated anywhere.
